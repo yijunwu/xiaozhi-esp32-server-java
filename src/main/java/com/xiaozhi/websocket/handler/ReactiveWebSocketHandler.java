@@ -287,8 +287,7 @@ public class ReactiveWebSocketHandler implements WebSocketHandler {
                                                                 .flatMap(audioPath -> audioService
                                                                         .sendAudioMessage(session, audioPath, sentence,
                                                                                 isStart, isEnd)
-                                                                        .doOnError(e -> logger.error("发送音频消息失败: {}",
-                                                                                e.getMessage(), e)))
+                                                                        .doOnError(e -> logger.error("发送音频消息失败: {}", e.getMessage(), e)))
                                                                 .onErrorResume(e -> {
                                                                     logger.error("处理句子失败: {}", e.getMessage(), e);
                                                                     return Mono.empty();

@@ -88,12 +88,12 @@
             <if test="ip != null and ip != ''">ip = #{ip},</if>
             <if test="lastLogin != null and lastLogin != ''">lastLogin = NOW(),</if>
             <if test="modelId != null and modelId != ''">modelId = #{modelId},</if>
-            <if test="sttId != null and sttId != ''">
+            <!--if test="sttId != null and sttId != ''">
                 <choose>
                     <when test="sttId == -1">sttId = null,</when>
                     <otherwise>sttId = #{sttId},</otherwise>
                 </choose>
-            </if>
+            </if-->
             <if test="roleId != null and roleId != ''">roleId = #{roleId},</if>
         </set>
         WHERE

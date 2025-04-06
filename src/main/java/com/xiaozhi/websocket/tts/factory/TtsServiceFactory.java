@@ -74,6 +74,8 @@ public class TtsServiceFactory {
      */
     private TtsService createApiService(SysConfig config, String voiceName, String outputPath) {
         String provider = config.getProvider();
+		
+        logger.info("创建 {} TTS服务, config: {}, voiceName: {}", provider, config, voiceName);
 
         // 如果是Edge，直接返回Edge服务
         if (DEFAULT_PROVIDER.equals(provider)) {

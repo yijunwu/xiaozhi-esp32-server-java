@@ -128,9 +128,9 @@ public class VolcengineTtsService implements TtsService {
             JsonObject audio = new JsonObject();
             audio.addProperty("voice_type", voiceName);
             audio.addProperty("encoding", "mp3");
-            audio.addProperty("speed_ratio", 1.0);
+            audio.addProperty("speed_ratio", 1.5);
             audio.addProperty("volume_ratio", 1.0);
-            audio.addProperty("pitch_ratio", 1.0);
+            audio.addProperty("pitch_ratio", 1.5);
             requestJson.add("audio", audio);
 
             // request部分
