@@ -61,6 +61,7 @@ public class LlmManager {
 
             // 获取LLM服务
             LlmService llmService = getLlmService(deviceId, configId);
+			logger.info("deviceId: {}, configId: {}", deviceId, configId);
 
             // 创建模型上下文
             ModelContext modelContext = new ModelContext(
@@ -214,6 +215,7 @@ public class LlmManager {
 
                 @Override
                 public void onComplete(String completeResponse) {
+					logger.info("pendingSentence: {}, completeResponse: {}", pendingSentence, completeResponse);
                     // 处理待发送的句子（如果有）
                     String pending = pendingSentence.getAndSet(null);
                     if (pending != null) {
