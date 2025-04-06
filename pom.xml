@@ -79,7 +79,7 @@
         <!-- 音频操作 -->
         <dependency>
             <groupId>org.bytedeco</groupId>
-            <artifactId>javacv</artifactId>
+            <artifactId>javacv-platform</artifactId>
             <version>1.5.9</version>
         </dependency>
         <dependency>

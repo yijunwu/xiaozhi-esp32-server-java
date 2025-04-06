@@ -78,6 +78,8 @@ public class OpenAiService extends AbstractLlmService {
 
         // 转换为JSON
         String jsonBody = objectMapper.writeValueAsString(requestBody);
+		
+		logger.info("jsonBody: {}", jsonBody);
 
         // 构建请求
         Request request = new Request.Builder()

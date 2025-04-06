@@ -284,11 +284,10 @@ public class ReactiveWebSocketHandler implements WebSocketHandler {
                                                         Mono.fromCallable(() -> textToSpeechService.textToSpeech(
                                                                 sentence, ttsConfig, device.getVoiceName()))
                                                                 .subscribeOn(Schedulers.boundedElastic())
-                                                                .flatMap(audioPath -> audioService
+                                                                .flatMap(audioPath -> {if (audioPath != null) return audioService
                                                                         .sendAudioMessage(session, audioPath, sentence,
                                                                                 isStart, isEnd)
-                                                                        .doOnError(e -> logger.error("发送音频消息失败: {}",
-                                                                                e.getMessage(), e)))
+                                                                        .doOnError(e -> logger.error("发送音频消息失败: {}", e.getMessage(), e)); else return null;})
                                                                 .onErrorResume(e -> {
                                                                     logger.error("处理句子失败: {}", e.getMessage(), e);
                                                                     return Mono.empty();
