@@ -71,7 +71,7 @@ public class VolcengineTtsService implements TtsService {
 		
 		if (!containsLetter(text)) {
             logger.warn("文本不包含文字！\"{}\"", text);
-            return null;
+            return "";
         }
 
         try {
