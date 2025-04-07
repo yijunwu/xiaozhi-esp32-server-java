@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -18,15 +19,15 @@ import com.xiaozhi.websocket.tts.TtsService;
 
 public class EdgeTtsService implements TtsService {
     private static final Logger logger = LoggerFactory.getLogger(EdgeTtsService.class);
-    
+
     private static final String PROVIDER_NAME = "edge";
-   
+
     // 音频名称
     private String voiceName;
 
     // 音频输出路径
     private String outputPath;
-    
+
     public EdgeTtsService(String voiceName, String outputPath) {
         this.voiceName = voiceName;
         this.outputPath = outputPath;
@@ -50,7 +51,7 @@ public class EdgeTtsService implements TtsService {
         Voice voiceObj = TTSVoice.provides().stream()
                 .filter(v -> v.getShortName().equals(voiceName))
                 .collect(Collectors.toList()).get(0);
-        
+
         TTS ttsEngine = new TTS(voiceObj, text);
         // 执行TTS转换获取音频文件
         String audioFilePath = ttsEngine.findHeadHook()
@@ -66,7 +67,7 @@ public class EdgeTtsService implements TtsService {
 
         return outputPath + audioFilePath;
     }
-    
+
     /**
      * 使用FFmpeg将原始音频转换为指定采样率和通道数的MP3
      */
@@ -126,5 +127,11 @@ public class EdgeTtsService implements TtsService {
             logger.error("文件操作失败: " + e.getMessage(), e);
             throw new RuntimeException("文件操作失败", e);
         }
+    }
+
+    @Override
+    public void streamTextToSpeech(String text, Consumer<byte[]> audioDataConsumer) throws Exception {
+        // TODO Auto-generated method stub
+        throw new UnsupportedOperationException("Unimplemented method 'streamTextToSpeech'");
     }
 }

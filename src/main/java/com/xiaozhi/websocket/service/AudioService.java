@@ -1,6 +1,8 @@
 package com.xiaozhi.websocket.service;
 
+import com.xiaozhi.entity.SysConfig;
 import com.xiaozhi.utils.OpusProcessor;
+import com.xiaozhi.websocket.tts.factory.TtsServiceFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +14,7 @@ import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 
 import java.io.File;
@@ -22,10 +25,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 /**
  * 音频服务 - 负责音频处理和WebSocket发送
@@ -34,6 +39,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AudioService {
 
     private static final Logger logger = LoggerFactory.getLogger(AudioService.class);
+
+    @Autowired
+    private TtsServiceFactory ttsService;
 
     // 播放帧持续时间（毫秒）
     private static final int FRAME_DURATION_MS = 60;
@@ -50,6 +58,12 @@ public class AudioService {
 
     // 跟踪每个会话的消息序列号，用于日志
     private final Map<String, AtomicInteger> sessionMessageCounters = new ConcurrentHashMap<>();
+
+    // 为流式TTS任务维护一个队列
+    private final Map<String, Queue<StreamingAudioTask>> sessionStreamingQueues = new ConcurrentHashMap<>();
+
+    // 跟踪每个会话的流式处理状态
+    private final Map<String, AtomicBoolean> sessionStreamingFlags = new ConcurrentHashMap<>();
 
     @Autowired
     private OpusProcessor opusProcessor;
@@ -103,6 +117,52 @@ public class AudioService {
     }
 
     /**
+     * 流式音频任务类
+     */
+    private static class StreamingAudioTask {
+        private final String text;
+        private final boolean isFirstMessage;
+        private final boolean isLastMessage;
+        private final SysConfig ttsConfig;
+        private final String voiceName;
+        private final int sequenceNumber;
+
+        public StreamingAudioTask(String text, boolean isFirstMessage, boolean isLastMessage,
+                SysConfig ttsConfig, String voiceName, int sequenceNumber) {
+            this.text = text;
+            this.isFirstMessage = isFirstMessage;
+            this.isLastMessage = isLastMessage;
+            this.ttsConfig = ttsConfig;
+            this.voiceName = voiceName;
+            this.sequenceNumber = sequenceNumber;
+        }
+
+        public String getText() {
+            return text;
+        }
+
+        public boolean isFirstMessage() {
+            return isFirstMessage;
+        }
+
+        public boolean isLastMessage() {
+            return isLastMessage;
+        }
+
+        public SysConfig getTtsConfig() {
+            return ttsConfig;
+        }
+
+        public String getVoiceName() {
+            return voiceName;
+        }
+
+        public int getSequenceNumber() {
+            return sequenceNumber;
+        }
+    }
+
+    /**
      * 音频处理结果类
      */
     public static class AudioProcessResult {
@@ -137,6 +197,8 @@ public class AudioService {
         sessionAudioQueues.putIfAbsent(sessionId, new ConcurrentLinkedQueue<>());
         sessionProcessingFlags.putIfAbsent(sessionId, new AtomicBoolean(false));
         sessionMessageCounters.putIfAbsent(sessionId, new AtomicInteger(0));
+        sessionStreamingQueues.putIfAbsent(sessionId, new ConcurrentLinkedQueue<>());
+        sessionStreamingFlags.putIfAbsent(sessionId, new AtomicBoolean(false));
         logger.debug("音频会话初始化 - SessionId: {}", sessionId);
     }
 
@@ -171,10 +233,21 @@ public class AudioService {
             }
         }
 
+        // 清空流式队列
+        Queue<StreamingAudioTask> streamingQueue = sessionStreamingQueues.get(sessionId);
+        if (streamingQueue != null) {
+            streamingQueue.clear();
+        }
+
         // 重置处理状态
         AtomicBoolean isProcessing = sessionProcessingFlags.get(sessionId);
         if (isProcessing != null) {
             isProcessing.set(false);
+        }
+
+        AtomicBoolean isStreamingProcessing = sessionStreamingFlags.get(sessionId);
+        if (isStreamingProcessing != null) {
+            isStreamingProcessing.set(false);
         }
 
         // 重置消息计数器
@@ -183,6 +256,8 @@ public class AudioService {
         // 移除会话相关的映射
         sessionAudioQueues.remove(sessionId);
         sessionProcessingFlags.remove(sessionId);
+        sessionStreamingQueues.remove(sessionId);
+        sessionStreamingFlags.remove(sessionId);
 
         logger.debug("音频处理会话已清理 - SessionId: {}", sessionId);
     }
@@ -295,9 +370,6 @@ public class AudioService {
         // 获取消息序列号
         int sequenceNumber = sessionMessageCounters.get(sessionId).incrementAndGet();
 
-        logger.info("[消息#{}-请求] 准备音频消息 - 文本: {}, 是否开始: {}, 是否结束: {}, 文件: {}",
-                sequenceNumber, text, isStart, isEnd, audioFilePath);
-
         // 处理音频文件，转换为Opus格式
         return Mono.fromCallable(() -> processAudioFile(audioFilePath, DEFAULT_SAMPLE_RATE, DEFAULT_CHANNELS))
                 .subscribeOn(Schedulers.boundedElastic())
@@ -311,19 +383,13 @@ public class AudioService {
                             audioFilePath,
                             sequenceNumber);
 
-                    logger.info("[消息#{}-入队] 添加到音频队列 - 文本: {}, 是否开始: {}, 是否结束: {}, 帧数: {}",
-                            sequenceNumber, text, isStart, isEnd, audioResult.getOpusFrames().size());
-
                     Queue<AudioMessageTask> queue = sessionAudioQueues.get(sessionId);
                     queue.add(task);
 
                     // 如果当前没有正在处理的任务，开始处理队列
                     AtomicBoolean isProcessing = sessionProcessingFlags.get(sessionId);
                     if (isProcessing.compareAndSet(false, true)) {
-                        logger.info("[消息#{}-处理] 开始处理音频队列 - 当前队列大小: {}", sequenceNumber, queue.size());
                         return processAudioQueue(session, sessionId);
-                    } else {
-                        logger.info("[消息#{}-等待] 已有任务在处理中，等待处理 - 当前队列大小: {}", sequenceNumber, queue.size());
                     }
 
                     // 如果已经有任务在处理，直接返回
@@ -332,6 +398,170 @@ public class AudioService {
                 .onErrorResume(e -> {
                     logger.error("[消息#{}-错误] 准备音频消息失败: {}", sequenceNumber, e.getMessage(), e);
                     return Mono.empty();
+                });
+    }
+
+    /**
+     * 处理流式音频数据并发送
+     * 
+     * @param session   WebSocket会话
+     * @param text      文本内容
+     * @param isStart   是否是对话开始
+     * @param isEnd     是否是对话结束
+     * @param config    TTS配置
+     * @param voiceName 语音名称
+     * @return 操作结果
+     */
+    public Mono<Void> streamAudioMessage(WebSocketSession session, String text, boolean isStart, boolean isEnd,
+            SysConfig config, String voiceName) {
+        String sessionId = session.getId();
+
+        // 确保会话已初始化
+        initializeSession(sessionId);
+
+        // 获取消息序列号
+        int sequenceNumber = sessionMessageCounters.get(sessionId).incrementAndGet();
+
+        logger.info("添加流式TTS任务到队列 - 文本: {}, 序列号: {}", text, sequenceNumber);
+
+        // 创建新的流式任务并添加到队列
+        StreamingAudioTask task = new StreamingAudioTask(text, isStart, isEnd, config, voiceName, sequenceNumber);
+        Queue<StreamingAudioTask> queue = sessionStreamingQueues.get(sessionId);
+        queue.add(task);
+
+        // 如果当前没有正在处理的任务，开始处理队列
+        AtomicBoolean isProcessing = sessionStreamingFlags.get(sessionId);
+        if (isProcessing.compareAndSet(false, true)) {
+            return processStreamingQueue(session, sessionId);
+        }
+
+        // 如果已经有任务在处理，直接返回
+        return Mono.empty();
+    }
+
+    /**
+     * 处理流式音频队列中的任务
+     * 
+     * @param session   WebSocket会话
+     * @param sessionId 会话ID
+     * @return 处理结果
+     */
+    private Mono<Void> processStreamingQueue(WebSocketSession session, String sessionId) {
+        Queue<StreamingAudioTask> queue = sessionStreamingQueues.get(sessionId);
+        AtomicBoolean isProcessing = sessionStreamingFlags.get(sessionId);
+
+        // 如果队列为空或会话已关闭，结束处理
+        if (queue.isEmpty() || !session.isOpen()) {
+            isProcessing.set(false);
+            return Mono.empty();
+        }
+
+        // 获取下一个任务
+        StreamingAudioTask task = queue.poll();
+        int sequenceNumber = task.getSequenceNumber();
+        logger.info("开始处理流式TTS任务 - 文本: {}, 序列号: {}", task.getText(), sequenceNumber);
+
+        // 创建消息序列
+        List<Mono<Void>> messageSequence = new ArrayList<>();
+
+        // 1. 如果是第一条消息，发送开始标记
+        if (task.isFirstMessage()) {
+            messageSequence.add(sendTtsStartMessage(session, sequenceNumber));
+        }
+
+        // 2. 如果有文本，发送句子开始标记
+        if (task.getText() != null && !task.getText().isEmpty()) {
+            messageSequence.add(sendSentenceStartMessage(session, task.getText(), sequenceNumber));
+        }
+
+        // 3. 创建一个CompletableFuture来跟踪TTS处理完成
+        CompletableFuture<Void> ttsDone = new CompletableFuture<>();
+
+        // 4. 创建一个Sink用于接收音频数据
+        Sinks.Many<byte[]> audioSink = Sinks.many().unicast().onBackpressureBuffer();
+
+        // 5. 启动TTS流式处理，将音频数据发送到Sink
+        try {
+            // 创建音频数据消费者
+            Consumer<byte[]> audioDataConsumer = pcmData -> {
+                try {
+                    // 使用更大的缓冲区收集PCM数据，避免过于频繁的转换
+                    // 创建一个更合适的帧大小，基于采样率和通道数
+                    int sampleRate = 16000;
+                    int channels = 1;
+                    int bytesPerSample = 2; // 16位PCM
+                    int optimalFrameSize = (sampleRate * channels * bytesPerSample * FRAME_DURATION_MS) / 1000;
+
+                    // 将PCM数据转换为Opus格式，确保帧大小合适
+                    List<byte[]> opusFrames = opusProcessor.convertPcmToOpus(pcmData, sampleRate, channels,
+                            FRAME_DURATION_MS);
+
+                    // 将每一帧添加到Sink
+                    for (byte[] frame : opusFrames) {
+                        audioSink.tryEmitNext(frame);
+                    }
+                } catch (Exception e) {
+                    logger.error("PCM转Opus失败: {}", e.getMessage(), e);
+                }
+            };
+
+            // 启动流式TTS，使用新的异步方法
+            ttsService.getTtsService(task.getTtsConfig(), task.getVoiceName())
+                    .streamTextToSpeechAsync(task.getText(), audioDataConsumer)
+                    .whenComplete((result, ex) -> {
+                        if (ex != null) {
+                            logger.error("流式TTS处理失败: {}", ex.getMessage(), ex);
+                            ttsDone.completeExceptionally(ex);
+                        } else {
+                            logger.debug("流式TTS处理完成 - 序列号: {}", sequenceNumber);
+                            ttsDone.complete(null);
+                        }
+                        audioSink.tryEmitComplete();
+                    });
+
+        } catch (Exception e) {
+            logger.error("启动流式TTS失败: {}", e.getMessage(), e);
+            audioSink.tryEmitComplete();
+            ttsDone.completeExceptionally(e);
+        }
+
+        // 6. 将Sink转换为Flux，并发送到WebSocket，添加帧率控制
+        Flux<WebSocketMessage> audioMessages = audioSink.asFlux()
+                .bufferTimeout(5, Duration.ofMillis(100)) // 收集多个帧或等待100ms
+                .filter(frames -> !frames.isEmpty())
+                .flatMap(frames -> {
+                    List<WebSocketMessage> messages = new ArrayList<>();
+                    for (byte[] frame : frames) {
+                        DataBuffer buffer = bufferFactory.wrap(frame);
+                        messages.add(session.binaryMessage(factory -> buffer));
+                    }
+                    return Flux.fromIterable(messages);
+                })
+                .delayElements(Duration.ofMillis(FRAME_DURATION_MS)); // 添加帧率控制
+
+        // 添加音频发送操作到序列
+        messageSequence.add(session.send(audioMessages));
+
+        // 7. 如果是最后一条消息，发送结束标记
+        if (task.isLastMessage()) {
+            messageSequence.add(sendTtsStopMessage(session, sequenceNumber));
+        }
+
+        // 8. 执行所有消息发送操作，并在完成后处理队列中的下一个任务
+        return Flux.concat(messageSequence)
+                .then(Mono.fromFuture(ttsDone))
+                .then()
+                .doFinally(signalType -> {
+                    logger.info("流式TTS任务完成 - 序列号: {}", sequenceNumber);
+
+                    // 继续处理队列中的下一个任务
+                    if (!queue.isEmpty() && session.isOpen()) {
+                        processStreamingQueue(session, sessionId)
+                                .subscribe();
+                    } else {
+                        // 队列为空，重置处理状态
+                        isProcessing.set(false);
+                    }
                 });
     }
 
@@ -348,8 +578,6 @@ public class AudioService {
 
         // 如果队列为空或会话已关闭，结束处理
         if (queue.isEmpty() || !session.isOpen()) {
-            logger.info("[队列处理-结束] 队列为空或会话已关闭 - SessionId: {}, 队列为空: {}, 会话开启: {}",
-                    sessionId, queue.isEmpty(), session.isOpen());
             isProcessing.set(false);
             return Mono.empty();
         }
@@ -358,21 +586,16 @@ public class AudioService {
         AudioMessageTask task = queue.poll();
         int sequenceNumber = task.getSequenceNumber();
 
-        logger.info("[消息#{}-开始处理] 从队列取出任务 - 文本: {}, 是否开始: {}, 是否结束: {}, 剩余队列大小: {}",
-                sequenceNumber, task.getText(), task.isFirstMessage(), task.isLastMessage(), queue.size());
-
         // 创建消息序列
         List<Mono<Void>> messageSequence = new ArrayList<>();
 
         // 1. 如果是第一条消息，发送开始标记
         if (task.isFirstMessage()) {
-            logger.info("[消息#{}-TTS开始] 发送TTS开始标记", sequenceNumber);
             messageSequence.add(sendTtsStartMessage(session, sequenceNumber));
         }
 
         // 2. 如果有文本，发送句子开始标记
         if (task.getText() != null && !task.getText().isEmpty()) {
-            logger.info("[消息#{}-句子开始] 发送句子开始标记 - 文本: {}", sequenceNumber, task.getText());
             messageSequence.add(sendSentenceStartMessage(session, task.getText(), sequenceNumber));
         }
 
@@ -385,17 +608,14 @@ public class AudioService {
 
         // 4. 添加音频发送操作到序列
         if (!audioMessages.isEmpty()) {
-            logger.info("[消息#{}-音频数据] 准备发送音频数据 - 帧数: {}", sequenceNumber, audioMessages.size());
             messageSequence.add(
                     session.send(
                             Flux.fromIterable(audioMessages)
-                                    .delayElements(Duration.ofMillis(FRAME_DURATION_MS))
-                                    .doOnComplete(() -> logger.info("[消息#{}-音频完成] 音频数据发送完成", sequenceNumber))));
+                                    .delayElements(Duration.ofMillis(FRAME_DURATION_MS))));
         }
 
         // 6. 如果是最后一条消息，发送结束标记
         if (task.isLastMessage()) {
-            logger.info("[消息#{}-TTS结束] 发送TTS结束标记", sequenceNumber);
             messageSequence.add(sendTtsStopMessage(session, sequenceNumber));
         }
 
@@ -405,16 +625,13 @@ public class AudioService {
                 .doFinally(signalType -> {
                     // 删除音频文件
                     deleteAudioFiles(task.getAudioFilePath());
-                    logger.info("[消息#{}-清理] 音频文件已删除: {}", sequenceNumber, task.getAudioFilePath());
 
                     // 继续处理队列中的下一个任务
                     if (!queue.isEmpty() && session.isOpen()) {
-                        logger.info("[消息#{}-继续] 继续处理队列中的下一个任务 - 剩余任务数: {}", sequenceNumber, queue.size());
                         processAudioQueue(session, sessionId)
                                 .subscribe();
                     } else {
                         // 队列为空，重置处理状态
-                        logger.info("[消息#{}-队列空] 队列处理完毕，重置处理状态", sequenceNumber);
                         isProcessing.set(false);
                     }
                 });
@@ -476,7 +693,6 @@ public class AudioService {
             jsonBuilder.append("}");
 
             String message = jsonBuilder.toString();
-            logger.info("[消息#{}-发送] 发送句子开始消息: {}", sequenceNumber, message);
 
             return session.send(Mono.just(session.textMessage(message)));
         } catch (Exception e) {
@@ -494,10 +710,8 @@ public class AudioService {
     public Mono<Void> sendTtsStartMessage(WebSocketSession session, int sequenceNumber) {
         try {
             String message = "{\"type\":\"tts\",\"state\":\"start\"}";
-            logger.info("[消息#{}-发送] 发送TTS开始消息: {}", sequenceNumber, message);
             return session.send(Mono.just(session.textMessage(message)));
         } catch (Exception e) {
-            logger.error("[消息#{}-错误] 发送TTS开始消息失败", sequenceNumber, e);
             return Mono.empty();
         }
     }
@@ -510,7 +724,6 @@ public class AudioService {
      */
     public Mono<Void> sendTtsStopMessage(WebSocketSession session, int sequenceNumber) {
         if (session == null || !session.isOpen()) {
-            logger.warn("[消息#{}-错误] 尝试发送停止指令到无效的WebSocket会话", sequenceNumber);
             return Mono.empty();
         }
 
@@ -528,13 +741,10 @@ public class AudioService {
             });
 
             // 清空队列
-            int queueSize = queue.size();
             queue.clear();
-            logger.info("[消息#{}-清空队列] 清空音频队列 - 清除任务数: {}", sequenceNumber, queueSize);
 
             // 异步删除文件
             if (!filesToDelete.isEmpty()) {
-                logger.info("[消息#{}-清理文件] 异步删除音频文件 - 文件数: {}", sequenceNumber, filesToDelete.size());
                 Mono.fromRunnable(() -> filesToDelete.forEach(this::deleteAudioFiles))
                         .subscribeOn(Schedulers.boundedElastic())
                         .subscribe();
@@ -544,7 +754,6 @@ public class AudioService {
         // 发送停止指令
         try {
             String message = "{\"type\":\"tts\",\"state\":\"stop\"}";
-            logger.info("[消息#{}-发送] 发送TTS停止消息: {}", sequenceNumber, message);
             return session.send(Mono.just(session.textMessage(message)));
         } catch (Exception e) {
             logger.error("[消息#{}-错误] 发送TTS停止消息失败", sequenceNumber, e);
@@ -561,7 +770,18 @@ public class AudioService {
     public Mono<Void> sendStop(WebSocketSession session) {
         String sessionId = session.getId();
         int sequenceNumber = sessionMessageCounters.getOrDefault(sessionId, new AtomicInteger(0)).incrementAndGet();
-        logger.info("[中断#{}-请求] 收到中断请求 - SessionId: {}", sequenceNumber, sessionId);
+
+        // 清空流式队列
+        Queue<StreamingAudioTask> streamingQueue = sessionStreamingQueues.get(sessionId);
+        if (streamingQueue != null) {
+            streamingQueue.clear();
+        }
+
+        // 重置流式处理状态
+        AtomicBoolean isStreamingProcessing = sessionStreamingFlags.get(sessionId);
+        if (isStreamingProcessing != null) {
+            isStreamingProcessing.set(false);
+        }
 
         // 复用现有的停止方法
         return sendTtsStopMessage(session, sequenceNumber);

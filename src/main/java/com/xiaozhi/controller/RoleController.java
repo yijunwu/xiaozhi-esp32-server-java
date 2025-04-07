@@ -12,7 +12,7 @@ import com.xiaozhi.entity.SysUser;
 import com.xiaozhi.service.SysConfigService;
 import com.xiaozhi.service.SysRoleService;
 import com.xiaozhi.utils.CmsUtils;
-import com.xiaozhi.websocket.service.TextToSpeechService;
+import com.xiaozhi.websocket.tts.factory.TtsServiceFactory;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,7 +41,7 @@ public class RoleController {
     private SysRoleService roleService;
 
     @Resource
-    private TextToSpeechService textToSpeechService;
+    private TtsServiceFactory ttsService;
 
     @Resource
     private SysConfigService configService;
@@ -61,7 +61,7 @@ public class RoleController {
                 if (user != null) {
                     role.setUserId(user.getUserId());
                 }
-                
+
                 List<SysRole> roleList = roleService.query(role);
                 AjaxResult result = AjaxResult.success();
                 result.put("data", new PageInfo<>(roleList));
@@ -106,7 +106,7 @@ public class RoleController {
                 if (user != null) {
                     role.setUserId(user.getUserId());
                 }
-                
+
                 roleService.add(role);
                 return AjaxResult.success();
             } catch (Exception e) {
@@ -117,7 +117,8 @@ public class RoleController {
     }
 
     @GetMapping("/testVoice")
-    public Mono<AjaxResult> testAudio(String message, String provider, Integer ttsId, String voiceName, ServerWebExchange exchange) {
+    public Mono<AjaxResult> testAudio(String message, String provider, Integer ttsId, String voiceName,
+            ServerWebExchange exchange) {
         return Mono.fromCallable(() -> {
             SysConfig config = null;
             try {
@@ -125,7 +126,7 @@ public class RoleController {
                     config = configService.selectConfigById(ttsId);
                 }
 
-                String audioFilePath = textToSpeechService.textToSpeech(message, config, voiceName);
+                String audioFilePath = ttsService.getTtsService(config, voiceName).textToSpeech(message);
                 AjaxResult result = AjaxResult.success();
                 result.put("data", audioFilePath);
                 return result;

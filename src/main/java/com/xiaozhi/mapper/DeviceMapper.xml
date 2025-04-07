@@ -94,7 +94,6 @@
                     <otherwise>sttId = #{sttId},</otherwise>
                 </choose>
             </if>
-            <if test="ttsId != null">ttsId = #{ttsId},</if>
             <if test="roleId != null and roleId != ''">roleId = #{roleId},</if>
         </set>
         WHERE

@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 
 import com.xiaozhi.websocket.vad.VadDetector;
 import com.xiaozhi.websocket.service.VadService;
+import com.xiaozhi.websocket.service.VadService.VadResult;
 
 /**
  * VadDetector接口的适配器，连接到新的VadService实现
@@ -23,7 +24,21 @@ public class VadServiceAdapter implements VadDetector {
 
     @Override
     public byte[] processAudio(String sessionId, byte[] pcmData) {
-        return vadService.processAudio(sessionId, pcmData);
+        try {
+            // 调用VadService处理音频并获取VadResult
+            VadResult result = vadService.processAudio(sessionId, pcmData);
+
+            // 如果结果为null或处理出错，返回原始数据
+            if (result == null || result.getProcessedData() == null) {
+                return pcmData;
+            }
+
+            // 返回处理后的音频数据
+            return result.getProcessedData();
+        } catch (Exception e) {
+            // 发生异常时返回原始数据
+            return pcmData;
+        }
     }
 
     @Override

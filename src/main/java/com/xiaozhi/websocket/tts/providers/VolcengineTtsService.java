@@ -12,6 +12,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -191,5 +192,11 @@ public class VolcengineTtsService implements TtsService {
             logger.error("发送TTS请求时发生错误", e);
             throw new Exception("发送TTS请求失败", e);
         }
+    }
+
+    @Override
+    public void streamTextToSpeech(String text, Consumer<byte[]> audioDataConsumer) throws Exception {
+        // TODO Auto-generated method stub
+        throw new UnsupportedOperationException("Unimplemented method 'streamTextToSpeech'");
     }
 }

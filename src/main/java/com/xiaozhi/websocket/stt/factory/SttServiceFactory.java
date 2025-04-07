@@ -70,17 +70,6 @@ public class SttServiceFactory {
       return serviceCache.get(fallbackProvider);
     }
 
-    // 如果没有备选服务，尝试创建一个API类型的服务作为备选
-    if (serviceCache.isEmpty()) {
-      logger.warn("没有可用的STT服务，将尝试创建默认API服务");
-      try {
-        return null;
-      } catch (Exception e) {
-        logger.error("创建默认API服务失败", e);
-        return null;
-      }
-    }
-
     return null;
   }
 

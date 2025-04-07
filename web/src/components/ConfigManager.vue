@@ -196,7 +196,8 @@ export default {
           ],
           typeFields: {
             tencent: [
-              { name: 'appId', label: 'Secret Id', required: true, span: 12 },
+              { name: 'appId', label: 'App Id', required: true, span: 12 },
+              { name: 'apiKey', label: 'Secret Id', required: true, span: 12 },
               { name: 'secretKey', label: 'Secret Key', required: true, span: 12 },
             ],
             aliyun: [
@@ -215,7 +216,8 @@ export default {
           ],
           typeFields: {
             tencent: [
-              { name: 'appId', label: 'Secret Id', required: true, span: 12 },
+              { name: 'appId', label: 'App Id', required: true, span: 12 },
+              { name: 'apiKey', label: 'Secret Id', required: true, span: 12 },
               { name: 'secretKey', label: 'Secret Key', required: true, span: 12 },
             ],
             aliyun: [

@@ -180,12 +180,14 @@ public class LlmManager {
 
                 @Override
                 public void onToken(String token) {
+
                     // 将token添加到完整响应
                     fullResponse.append(token);
 
                     // 检查是否有待处理的句子
                     String pending = pendingSentence.get();
                     if (pending != null) {
+
                         // 有待处理的句子，发送它
                         boolean isStart = sentenceCount.get() == 0;
                         boolean isEnd = false; // 中间句子不是结束
@@ -198,7 +200,8 @@ public class LlmManager {
                     currentSentence.append(token);
 
                     // 检查是否包含标点符号
-                    if (PUNCTUATION_PATTERN.matcher(token).matches()) {
+                    if (PUNCTUATION_PATTERN.matcher(token).find()) {
+
                         // 检查当前句子是否达到最小长度
                         if (currentSentence.length() >= MIN_SENTENCE_LENGTH) {
                             String sentence = currentSentence.toString().trim();
@@ -214,6 +217,7 @@ public class LlmManager {
 
                 @Override
                 public void onComplete(String completeResponse) {
+
                     // 处理待发送的句子（如果有）
                     String pending = pendingSentence.getAndSet(null);
                     if (pending != null) {
@@ -227,11 +231,9 @@ public class LlmManager {
                     // 处理可能剩余的最后一个句子
                     if (currentSentence.length() > 0) {
                         String sentence = currentSentence.toString().trim();
-
                         // 确定句子状态
                         boolean isStart = sentenceCount.get() == 0;
                         boolean isEnd = true; // 最后一个句子是结束
-
                         sentenceHandler.accept(sentence, isStart, isEnd);
                         sentenceCount.incrementAndGet();
                     }

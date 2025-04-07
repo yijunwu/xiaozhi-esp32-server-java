@@ -4,7 +4,7 @@ import com.xiaozhi.entity.SysMessage;
 import com.xiaozhi.entity.SysRole;
 import com.xiaozhi.service.SysMessageService;
 import com.xiaozhi.service.SysRoleService;
-import com.xiaozhi.websocket.service.TextToSpeechService;
+import com.xiaozhi.websocket.tts.factory.TtsServiceFactory;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +30,7 @@ public class DatabaseChatMemory implements ChatMemory {
     private SysRoleService roleService;
 
     @Autowired
-    private TextToSpeechService textToSpeechService;
+    private TtsServiceFactory ttsService;
 
     // 缓存系统消息，避免频繁查询数据库
     private Map<String, String> systemMessageCache = new ConcurrentHashMap<>();
@@ -45,7 +45,9 @@ public class DatabaseChatMemory implements ChatMemory {
             message.setMessage(content);
             message.setRoleId(roleId);
             if (sender == "assistant") {
-                message.setAudioPath(textToSpeechService.textToSpeech(content));
+                // 目前生成的语音保存采用默认的语音合成服务，后续可以考虑支持自定义语音合成服务
+                // todo
+                message.setAudioPath(ttsService.getDefaultTtsService().textToSpeech(content));
             }
             messageService.add(message);
         } catch (Exception e) {

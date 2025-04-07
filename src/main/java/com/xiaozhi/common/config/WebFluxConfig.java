@@ -29,7 +29,7 @@ public class WebFluxConfig implements WebFluxConfigurer {
         corsConfig.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/ws/**", corsConfig); // 只对WebSocket路径应用CORS
+        source.registerCorsConfiguration("/**", corsConfig);
 
         return new CorsWebFilter(source);
     }
